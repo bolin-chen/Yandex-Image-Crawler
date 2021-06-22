@@ -1,24 +1,31 @@
-import json
 import argparse
-import requests as req
-from urllib.request import Request, urlopen
 from bs4 import BeautifulSoup
 from selenium import webdriver
-import asyncio
+from pathlib import Path
+from tqdm import tqdm
 
-#  ex) python YandexCrawler -name dog
+
 parser = argparse.ArgumentParser()
-parser.add_argument("-name", "--searchWord", required=True)
-parser.add_argument("-count", "--wantCount", default=400)
+parser.add_argument("-name", "--search_word", required=True)
+parser.add_argument("-count", "--want_count", type=int, default=40)
 args = parser.parse_args()
-searchWord = args.searchWord
-count = args.wantCount
-if (int(count) > 1000):
-    count = 1000
-    print('Limit 1000 Picture')
+search_word = args.search_word
+want_count = args.want_count
 
-async def PrintAll(i, driver, json_data):
-    href_src = "https://yandex.com" + i[1].attrs['href']
+scroll_count = max(want_count // 10, 1)
+
+chore_driver_path = '/Users/stardust/code/project/Yandex-Image-Crawler/chromedriver'
+url_list_dir = '/Users/stardust/code/project/Yandex-Image-Crawler/url_list'
+
+url_list_file = f'{url_list_dir}/{search_word}.txt'
+
+proxy="socks5://127.0.0.1:1086"
+
+Path(url_list_dir).mkdir(parents=True, exist_ok=True)
+print(f'search_word: {search_word}, want_count: {want_count}, scroll_count: {scroll_count}, url_list_file: {url_list_file}')
+
+def get_url(driver, link_tag):
+    href_src = "https://yandex.com" + link_tag.attrs['href']
     driver.get(href_src)
     temp_data = BeautifulSoup(driver.page_source,"html.parser").find_all("img","MMImage-Origin")
         
@@ -27,59 +34,53 @@ async def PrintAll(i, driver, json_data):
     except KeyError:
         attr_src = temp_data[0].attrs['data-src']
     except IndexError:
-        return
-    try:
-        request = Request(attr_src, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36'})
-    except ValueError:
-        attr_src = "https:" + attr_src
-        request = Request(attr_src, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36'})
-    try:
-        t = urlopen(request).read()
-    except Exception:
-        return
-    filename = searchWord+str(i[0]+1)+'.jpg'
-    json_data.append({'URL':attr_src})
-    with open(filename,"wb") as f:
-        f.write(t)
+        return ''
 
-    # ex) print <SEARCH WORD>.jpg : <attr_src>
-    print(filename + " : " + attr_src) 
+    # print(attr_src)
 
-# Yandex that Parsing Google Image
-async def YandexImageCrawler():
+    return attr_src
+
+def crawl_yandex_img():
     url_info = "https://yandex.com/images/search?text="
-    
-    # Store Image URL to JSON File
-    image_json = {"IMAGE":[]}
-    json_data = image_json["IMAGE"]
+    url_list = []
 
     # Chromedriver Option
     options = webdriver.ChromeOptions()
     options.add_argument('headless')
+    options.add_argument('--proxy-server={}'.format(proxy))
     options.add_argument('window-size=1920x1080')
     options.add_argument('--disable-gpu')
+    options.add_argument('--no-sandbox')
     options.add_argument('--log-level=3')
 
     # Chromedriver 
-    driver = webdriver.Chrome("chromedriver.exe", chrome_options=options)
+    driver = webdriver.Chrome(chore_driver_path, options=options)
 
-    driver.get(url_info + searchWord)
+    driver.get(url_info + search_word)
 
-    for i in range(4000):
+    print('Load webpage complete')
+
+    for i in range(scroll_count):
         driver.execute_script('window.scrollBy(0,document.body.scrollHeight)')
     
-    img_data = BeautifulSoup(driver.page_source,"html.parser").find_all("a", "serp-item__link")
+    print('Scroll complete')
 
-    for i in enumerate(img_data[1: int(count) + 1]):
-        await PrintAll(i, driver, json_data)
-        
-    print("Done.")
-    # Write ImageURL.json File
-    with open('ImageURL.json', 'w') as f:
-        json.dump(json_data, f)
-    print("Write ImageURL.json")
+    all_data = BeautifulSoup(driver.page_source,"html.parser").find_all("a", "serp-item__link")
+
+    selected_data = all_data[:want_count]
+    for i, link_tag in enumerate(tqdm(selected_data)):
+        url = get_url(driver, link_tag)
+        url_list.append(url)
+
+    print('Gather url complete')
+
+    url_list = list(filter(lambda x: x != '', url_list))
+    url_list = list(map(lambda x: x + '\n', url_list))
+
+    with open(url_list_file, 'w') as f:
+        f.writelines(url_list)
+    print(f"Write data to {url_list_file} complete")
 
 # Main
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(YandexImageCrawler())
+    crawl_yandex_img()
